@@ -3,6 +3,7 @@
 
 """ Transport layer fuctionality using python sockets. """
 from __future__ import print_function
+from pickle import FALSE
 import ssl
 import socket
 import time
@@ -19,6 +20,7 @@ if util.find_spec("test_servers"):
 
 DELIM = "\r\n\r\n"
 UTF8 = 'utf-8'
+BUF_LEN = 2**20
 
 
 class HttpSock(object):
@@ -252,35 +254,37 @@ class HttpSock(object):
                     return buf.decode(UTF8, "ignore")
                 else:
                     raise
-
+        
         # get the data of header (and maybe more)
         bytes_received = 0
         while DELIM not in data:
             try:
                 self._sock.settimeout(req_timeout_sec)
-                buf = self._sock.recv(2**20)
+                buf = self._sock.recv(BUF_LEN) # try with 4096 2^12
                 bytes_received += len(buf)
             except Exception as error:
                 raise TransportLayerException(f"Exception: {error!s}")
 
-            if len(buf) == 0:
+            if len(buf) == 0 and bytes_received != 0:
                 return data
 
             data += decode_buf(buf)
-
+        
         # Handle chunk encoding
         chuncked_encoding = False
         if 'Transfer-Encoding: chunked\r\n' in data or\
             'transfer-encoding: chunked\r\n' in data:
             # Handle corner case of single-chunk data transfer. Without this
             # check, the next recv call on _sock will hang until timeout.
-            if data.endswith(DELIM):
-                return data
+            # if data.endswith(DELIM):
+            #     return (data + 'aici delim')
+            if len(buf) == 0:
+                    return data
             chuncked_encoding = True
         if chuncked_encoding:
             while True:
                 try:
-                    buf = self._sock.recv(2**20)
+                    buf = self._sock.recv(BUF_LEN)
                     bytes_received += len(buf)
                 except Exception as error:
                     raise TransportLayerException(f"Exception: {error!s}")
@@ -305,7 +309,7 @@ class HttpSock(object):
                 content_len = data_lower.split("content-length: ")[1]
                 content_len = int(content_len.split('\r\n')[0])
             except Exception as error:
-                content_len = 2**20
+                content_len = BUF_LEN
 
         bytes_remain = content_len - bytes_received + header_len
 
@@ -313,7 +317,7 @@ class HttpSock(object):
         # get rest of socket data
         while bytes_remain > 0:
             try:
-                buf = self._sock.recv(2**20)
+                buf = self._sock.recv(BUF_LEN)
             except Exception as error:
                 raise TransportLayerException(f"Exception: {error!s}")
 
@@ -322,7 +326,8 @@ class HttpSock(object):
 
             bytes_remain -= len(buf)
             data += decode_buf(buf)
-
+        
+        # self._closeSocket()
         return data
 
     def _closeSocket(self):
@@ -334,5 +339,6 @@ class HttpSock(object):
         """
         try:
             self._sock.close()
+            # self._connected = FALSE
         except Exception as error:
                 raise TransportLayerException(f"Exception: {error!s}")
